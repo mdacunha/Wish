@@ -143,41 +143,32 @@ pid_t launch_command(char **argv, int argc, const char *outfile) {
     return pid;
 }
 
-/* Handle a single command string (no ampersand). Returns pid if external launched, 0 if built-in handled, -1 if error/no-op. If launched in background, returns pid>0 and caller should wait later. */
 int handle_single_command(char *command, pid_t *out_pid) {
     *out_pid = -1;
     if (!command) return -1;
     command = trim(command);
     if (strlen(command) == 0) return -1; // empty
 
-    /* check redirection: count '>' occurrences */
-    /* NEW: check if left side before '>' is empty */
     char *p = command;
     while (*p == ' ' || *p == ' ') p++;
     if (*p == '>') {
     error();
     return -1;
     }
-    /* NEW: ensure left command (before '>') is not empty */
     char *redir_ptr = strchr(command, '>');
-    /* NEW: if '>' is the first non-whitespace character, left side is empty */
     if (redir_ptr != NULL && redir_ptr == command) {
         error();
         return -1;
     }
 
-    /* check redirection: count '>' occurrences */
     char *outfile = NULL;
     if (redir_ptr) {
-        /* ensure only one '>' */
         char *second = strchr(redir_ptr + 1, '>');
         if (second) { error(); return -1; }
-        /* split */
         *redir_ptr = '\0';
         char *right = redir_ptr + 1;
         right = trim(right);
         if (strlen(right) == 0) { error(); return -1; }
-        /* there should be exactly one token on right (filename) */
         int rc = 0;
         char **right_argv = tokenize_whitespace(right, &rc);
         if (!right_argv) { error(); return -1; }
@@ -186,14 +177,12 @@ int handle_single_command(char *command, pid_t *out_pid) {
         free_argv(right_argv);
     }
 
-    /* tokenize left part */
     command = trim(command);
     int argc = 0;
     char **argv = tokenize_whitespace(command, &argc);
     if (!argv) { if (outfile) free(outfile); return -1; }
     if (argc == 0) { free_argv(argv); if (outfile) free(outfile); return -1; }
 
-    /* built-ins: exit, cd, path */
     if (strcmp(argv[0], "exit") == 0) {
         if (argc != 1) {
             error();
@@ -223,15 +212,12 @@ int handle_single_command(char *command, pid_t *out_pid) {
         return 0;
     }
     if (strcmp(argv[0], "path") == 0) {
-        /* argv[1..argc-1] are new paths */
         if (argc - 1 == 0) {
             set_path(NULL, 0);
         } else {
-            /* build array of char* */
             char **newp = malloc(sizeof(char*) * (argc - 1));
             if (!newp) { error(); free_argv(argv); if (outfile) free(outfile); return -1; }
             for (int i = 1; i < argc; ++i) newp[i-1] = argv[i];
-            /* note: set_path copies strings, so it's safe */
             set_path(newp, argc - 1);
             free(newp);
         }
@@ -240,7 +226,6 @@ int handle_single_command(char *command, pid_t *out_pid) {
         return 0;
     }
 
-    /* external command */
     pid_t pid = launch_command(argv, argc, outfile);
     if (pid > 0) {
         *out_pid = pid;
@@ -285,20 +270,15 @@ int main(int argc, char *argv[]) {
         }
         nread = getline(&line, &len, input);
         if (nread == -1) {
-            /* EOF */
             free(line);
             if (!interactive) fclose(input);
             exit(0);
         }
-        /* remove trailing newline */
         if (nread > 0 && line[nread-1] == '\n') line[nread-1] = '\0';
 
-        /* Skip empty lines */
         char *tline = trim(line);
         if (strlen(tline) == 0) continue;
 
-        /* Split by '&' for parallel commands. We must not lose empty tokens; treat consecutive & as errors (empty command) */
-        /* We'll use a manual scan to extract substrings between & */
         char *cursor = tline;
         char *start = cursor;
         pid_t pids[MAX_TOKENS];
@@ -308,18 +288,15 @@ int main(int argc, char *argv[]) {
         while (1) {
             char *amp = strchr(start, '&');
             if (!amp) {
-                /* last command */
                 char *cmd = strdup(start);
                 char *cmd_trim = trim(cmd);
                 if (strlen(cmd_trim) == 0) {
-                    /* empty command at end */
                     free(cmd);
                     error_in_line = 1;
                 } else {
                     pid_t child = -1;
                     int rc = handle_single_command(cmd_trim, &child);
                     if (rc == -1) {
-                        /* if built-in error or other parse error, mark but continue */
                         error_in_line = 1;
                     }
                     if (child > 0) pids[pcount++] = child;
@@ -327,12 +304,10 @@ int main(int argc, char *argv[]) {
                 }
                 break;
             } else {
-                /* command from start to amp-1 */
                 *amp = '\0';
                 char *cmd = strdup(start);
                 char *cmd_trim = trim(cmd);
                 if (strlen(cmd_trim) == 0) {
-                    /* empty command between ampersands is error */
                     free(cmd);
                     error_in_line = 1;
                 } else {
@@ -345,18 +320,14 @@ int main(int argc, char *argv[]) {
                     free(cmd);
                 }
                 start = amp + 1;
-                /* continue loop */
             }
         }
 
-        /* After launching all children for this line, wait for them */
         for (int i = 0; i < pcount; ++i) {
             int status;
             waitpid(pids[i], &status, 0);
         }
-        /* continue to next line */
     }
 
-    /* never reached */
     return 0;
 }
